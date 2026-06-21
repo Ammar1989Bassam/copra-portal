@@ -517,10 +517,22 @@ async function submitOrder() {
   const notes = document.getElementById('order-notes').value;
   const v = ORDER_VARIANT.variant;
 
+  if (qty < 1) { alert('Enter a valid quantity.'); return; }
   if (qty > v.stock_qty) {
-    alert(`Only ${v.stock_qty} units available.`);
+    alert('Only ' + v.stock_qty + ' units available.');
     return;
   }
+  // Prevent duplicate pending submission for same variant
+  const already = DB.reservations.find(r => r.variant_id === v.id && r.status === 'Pending');
+  if (already) {
+    alert('You already have a pending order for this product. Please wait for it to be processed before submitting another.');
+    closeOrder();
+    return;
+  }
+
+  // Disable submit button to prevent double-click
+  const btn = document.querySelector('#m-order .btn-p');
+  if (btn) btn.disabled = true;
 
   const reservation = {
     id: uid(),
@@ -538,11 +550,13 @@ async function submitOrder() {
     await sbInsert('reservations', reservation);
     DB.reservations.unshift(reservation);
     closeOrder();
-    alert('✅ Order submitted successfully! Our team will contact you to confirm.');
+    alert('Order submitted. Our team will contact you to confirm.');
+    await loadPortalData();
     renderOverview();
     renderOrders();
   } catch(e) {
-    alert('❌ Failed to submit order: ' + e.message);
+    if (btn) btn.disabled = false;
+    alert('Failed to submit order: ' + e.message);
   }
 }
 
