@@ -312,24 +312,31 @@ function doLogout() {
 
 // ── Load data ────────────────────────────────────────────────────
 async function loadPortalData() {
+  // Use service key for all reads to get accurate live data
   const [products, variants, sales, reservations] = await Promise.all([
-    sbSelect('products', 'select=*', false),
-    sbSelect('variants', 'select=*&stock_qty=gt.0', false),
+    sbSelect('products', 'select=*', true),
+    sbSelect('variants', 'select=*', true),
     sbSelect('sales', `customer_id=eq.${CUSTOMER.customer_id}&select=*&order=date.desc`, true),
     sbSelect('reservations', `customer_id=eq.${CUSTOMER.customer_id}&select=*&order=created_at.desc`, true),
   ]);
   DB.products     = products     || [];
-  DB.variants     = variants     || [];
+  DB.variants     = (variants||[]).filter(v => (+v.stock_qty||0) > 0);
   DB.sales        = sales        || [];
   DB.reservations = reservations || [];
 }
 
 // ── Tab switching ────────────────────────────────────────────────
-function switchTab(tab) {
+async function switchTab(tab) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.pg').forEach(p => p.classList.remove('active'));
   event.currentTarget.classList.add('active');
   document.getElementById('pg-' + tab).classList.add('active');
+  // Reload fresh data on every tab switch
+  await loadPortalData();
+  if(tab==='overview') renderOverview();
+  if(tab==='catalog')  renderCatalog();
+  if(tab==='orders')   renderOrders();
+  if(tab==='account')  renderAccount();
 }
 
 // ── Overview ─────────────────────────────────────────────────────
@@ -412,12 +419,35 @@ function renderCatalog() {
 // ── Orders ───────────────────────────────────────────────────────
 function renderOrders() {
   const el = document.getElementById('orders-list');
-  const all = [...DB.sales, ...DB.reservations.map(r => ({...r, _is_reservation:true}))];
-  if (!all.length) { el.innerHTML = '<div class="empty">No orders yet.</div>'; return; }
+  const sales = DB.sales || [];
+  const reservations = DB.reservations || [];
 
-  const sales = DB.sales;
-  el.innerHTML = !sales.length ? '<div class="empty">No orders yet.</div>' : 
-    `<div style="overflow-x:auto"><table>
+  let html = '';
+
+  // Show pending reservations first
+  if (reservations.length) {
+    html += `<h3 style="font-size:13px;font-weight:700;color:var(--nv);margin-bottom:10px">📋 Order Requests (${reservations.length})</h3>
+    <div style="overflow-x:auto;margin-bottom:20px"><table>
+    <thead><tr><th>Date</th><th>Product</th><th>Qty</th><th>Notes</th><th>Status</th></tr></thead>
+    <tbody>${reservations.map(r => {
+      const v = DB.variants.find(x => x.id === r.variant_id);
+      const p = DB.products.find(x => x.id === r.product_id);
+      const label = v ? [v.car_make,v.car_model,v.set_type].filter(Boolean).join(' ') : '—';
+      return `<tr>
+        <td>${dF(r.date)}</td>
+        <td>${p?.name||'—'} <span style="font-size:11px;color:var(--mu)">${label}</span></td>
+        <td>${r.qty}</td>
+        <td style="font-size:11px">${r.notes||'—'}</td>
+        <td><span class="badge ${r.status==='Confirmed'?'badge-gn':r.status==='Rejected'?'badge-rd':'badge-or'}">${r.status||'Pending'}</span></td>
+      </tr>`;
+    }).join('')}
+    </tbody></table></div>`;
+  }
+
+  // Then confirmed sales history
+  if (sales.length) {
+    html += `<h3 style="font-size:13px;font-weight:700;color:var(--nv);margin-bottom:10px">🧾 Sales History (${sales.length})</h3>
+    <div style="overflow-x:auto"><table>
     <thead><tr><th>Date</th><th>Product</th><th>Variant</th><th>Qty</th><th>Unit Price</th><th>Total</th><th>Payment</th><th>Status</th></tr></thead>
     <tbody>${sales.map(s => `<tr>
       <td>${dF(s.date)}</td>
@@ -428,8 +458,12 @@ function renderOrders() {
       <td>${nisF((+s.unit_price||0)*(+s.qty||1))}</td>
       <td>${s.payment_type||'—'}</td>
       <td><span class="badge ${s.payment_status==='Collected'||s.payment_status==='Paid'?'badge-gn':s.payment_status==='Credit'?'badge-or':'badge-bl'}">${s.payment_status||'—'}</span></td>
-    </tr>`).join('')}</tbody>
-  </table></div>`;
+    </tr>`).join('')}
+    </tbody></table></div>`;
+  }
+
+  if (!html) html = '<div class="empty">No orders or requests yet.</div>';
+  el.innerHTML = html;
 }
 
 // ── Account ──────────────────────────────────────────────────────
